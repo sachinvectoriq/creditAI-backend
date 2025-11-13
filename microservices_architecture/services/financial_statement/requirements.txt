@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-httpx
-pandas
-numpy
-pydantic_settings
-aiohttp
