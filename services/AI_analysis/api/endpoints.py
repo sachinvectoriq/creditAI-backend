@@ -13,7 +13,7 @@ router = APIRouter()
 logger = logging.getLogger("ai-analysis-endpoints")
 
 # Default path for mapping JSON (Windows-style as requested)
-DEFAULT_MAPPING_JSON = r"core\\company_tickers_exchange.json"
+DEFAULT_MAPPING_JSON = r"api\\company_tickers_exchange.json"
 
 @router.get("/healthz", response_model=HealthResponse)
 async def healthz():
@@ -74,3 +74,4 @@ async def ai_analysis_upload(
     except Exception as e:
         logger.exception("/ai-analysis/upload failed")
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
+
