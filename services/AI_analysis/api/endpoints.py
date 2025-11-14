@@ -1,10 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi import status
-from typing import Optional
-import asyncio
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
 import logging
 
-from model import AIAnalysisRequest, AIAnalysisResponse, HealthResponse
+from model import AIAnalysisResponse, HealthResponse
 from core.aianalysis import (
     extract_text_from_file,
     build_latest_10q_url_from_mapping,
@@ -15,42 +12,28 @@ from core.aianalysis import (
 router = APIRouter()
 logger = logging.getLogger("ai-analysis-endpoints")
 
+# Default path for mapping JSON (Windows-style as requested)
+DEFAULT_MAPPING_JSON = r"core\\company_tickers_exchange.json"
+
 @router.get("/healthz", response_model=HealthResponse)
 async def healthz():
     return HealthResponse(status="ok")
 
-@router.post("/ai-analysis", response_model=AIAnalysisResponse, status_code=status.HTTP_200_OK)
-async def ai_analysis(
-    payload: AIAnalysisRequest = Depends(),
-    file: Optional[UploadFile] = File(default=None),
+# -------- Auto-fetch (no file) --------
+@router.post("/ai-analysis/auto", response_model=AIAnalysisResponse, status_code=status.HTTP_200_OK)
+async def ai_analysis_auto(
+    ticker: str = Form(...),
+    mapping_json: str = Form(DEFAULT_MAPPING_JSON),
+    similarity_top_k: int = Form(5),
 ):
-    """Handle both manual upload and auto-fetch modes.
-
-    - Manual: multipart/form-data with file field
-    - Auto-fetch: JSON/form fields with ticker + mapping_json path
+    """
+    Auto-fetch latest 10-Q via ticker + mapping_json.
+    - ticker: required
+    - mapping_json: optional (defaults to core\\company_tickers_exchange.json)
+    - similarity_top_k: optional (defaults to 5)
     """
     try:
-        similarity_top_k = payload.similarity_top_k
-
-        # Manual upload takes precedence if provided
-        if file is not None:
-            contents = await file.read()
-            text = extract_text_from_file(contents, filename=file.filename)
-            if not text:
-                raise HTTPException(status_code=400, detail="Unable to read uploaded file.")
-            results = await run_full_pipeline_from_text(text, similarity_top_k=similarity_top_k)
-            # If all sections failed upstream, propagate a 502
-            if results and all(isinstance(v, str) and v.startswith("Error:") for v in results.values()):
-                raise HTTPException(status_code=502, detail="Upstream agent execution failed for all sections.")
-            return AIAnalysisResponse(status="success", results=results)
-
-        # Auto-fetch mode
-        if not payload.ticker or not payload.mapping_json:
-            raise HTTPException(
-                status_code=400,
-                detail="For auto-fetch mode, provide both 'ticker' and 'mapping_json'. Or upload a file.",
-            )
-        url = build_latest_10q_url_from_mapping(payload.ticker.upper(), payload.mapping_json)
+        url = build_latest_10q_url_from_mapping(ticker.strip().upper(), mapping_json.strip())
         if not url:
             raise HTTPException(status_code=404, detail="Could not resolve latest 10-Q URL for the given ticker.")
 
@@ -62,5 +45,32 @@ async def ai_analysis(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("/ai-analysis failed")
+        logger.exception("/ai-analysis/auto failed")
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
+
+# -------- Manual upload (file) --------
+@router.post("/ai-analysis/upload", response_model=AIAnalysisResponse, status_code=status.HTTP_200_OK)
+async def ai_analysis_upload(
+    file: UploadFile = File(...),
+    similarity_top_k: int = Form(5),
+):
+    """
+    Manual 10-Q upload (PDF/DOCX/TXT). File is required.
+    - similarity_top_k: optional (defaults to 5)
+    """
+    try:
+        contents = await file.read()
+        text = extract_text_from_file(contents, filename=file.filename)
+        if not text:
+            raise HTTPException(status_code=400, detail="Unable to read uploaded file.")
+
+        results = await run_full_pipeline_from_text(text, similarity_top_k=similarity_top_k)
+        if results and all(isinstance(v, str) and v.startswith("Error:") for v in results.values()):
+            raise HTTPException(status_code=502, detail="Upstream agent execution failed for all sections.")
+        return AIAnalysisResponse(status="success", results=results)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("/ai-analysis/upload failed")
         raise HTTPException(status_code=500, detail=f"Internal error: {e}")
