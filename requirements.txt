@@ -62,3 +62,6 @@ pytest-asyncio
 black
 flake8
 mypy
+
+#Agentic development
+agent_framework
