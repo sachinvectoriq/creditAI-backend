@@ -8,6 +8,14 @@ app = FastAPI(
     description="Gateway that forwards requests to the underlying microservices.",
     version="1.0.0",
 )
-app.mount("/account-overview", account_overview_app)
-app.mount("/ai-analysis", ai_analysis_app)
-app.mount("/financial-statement", financial_statement_app)
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Health check endpoint for the gateway."""
+    return {
+        "status": "healthy",
+        "service": "credit_ai_gateway",
+        "version": "1.0.0",
+    }
+# app.mount("/account-overview", account_overview_app)
+# app.mount("/ai-analysis", ai_analysis_app)
+# app.mount("/financial-statement", financial_statement_app)
