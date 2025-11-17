@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
 import logging
 
-from model import AIAnalysisResponse, HealthResponse
-from core.aianalysis import (
+from services.AI_analysis.model import AIAnalysisResponse, HealthResponse
+from services.AI_analysis.core.aianalysis import (
     extract_text_from_file,
     build_latest_10q_url_from_mapping,
     run_full_pipeline_from_url,

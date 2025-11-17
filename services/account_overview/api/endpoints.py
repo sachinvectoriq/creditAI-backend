@@ -5,8 +5,8 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from model import AccountOverviewRequestJSON, AccountOverviewResponse, MetaSummary
-from core.account_processor import load_inputs, build_account_overview, format_overview_table
+from services.account_overview.model import AccountOverviewRequestJSON, AccountOverviewResponse, MetaSummary
+from services.account_overview.core.account_processor import load_inputs, build_account_overview, format_overview_table
 
 logger = logging.getLogger("account_overview.endpoints")
 

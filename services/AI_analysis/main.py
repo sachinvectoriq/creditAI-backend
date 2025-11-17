@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
-from api.endpoints import router as api_router
+from services.AI_analysis.api.endpoints import router as api_router
 
 
 logging.basicConfig(

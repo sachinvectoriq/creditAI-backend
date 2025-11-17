@@ -7,7 +7,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
-from model import ItemListRow, PaymentHistoryRow, AgingBucket
+from services.account_overview.model import ItemListRow, PaymentHistoryRow, AgingBucket
 
 # ---- Output labels (kept from your existing intent) ----
 ROW_LABELS: List[str] = [
