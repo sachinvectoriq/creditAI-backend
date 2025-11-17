@@ -3,12 +3,12 @@ from services.AI_analysis.main import ai_analysis_app as ai_analysis_app
 from services.financial_statement.main import financial_app as financial_statement_app
 from fastapi import FastAPI
 
-app = FastAPI(
+main = FastAPI(
     title="Credit AI Gateway",
     description="Gateway that forwards requests to the underlying microservices.",
     version="1.0.0",
 )
-@app.get("/health", tags=["Health"])
+@main.get("/health", tags=["Health"])
 async def health_check():
     """Health check endpoint for the gateway."""
     return {
