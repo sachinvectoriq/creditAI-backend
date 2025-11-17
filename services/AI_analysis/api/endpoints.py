@@ -13,7 +13,7 @@ router = APIRouter()
 logger = logging.getLogger("ai-analysis-endpoints")
 
 # Default path for mapping JSON (Windows-style as requested)
-DEFAULT_MAPPING_JSON = r"api\\company_tickers_exchange.json"
+DEFAULT_MAPPING_JSON = r"services\\AI_analysis\\api\\company_tickers_exchange.json"
 
 @router.get("/healthz", response_model=HealthResponse)
 async def healthz():

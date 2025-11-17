@@ -186,6 +186,11 @@ Make it more cohesive, readable, and precise, preserving all numeric facts."""
 # ------------------------------------------------------------
 # 🧠 Financial RAG Agentic System (async) — reorganized only
 # ------------------------------------------------------------
+ogger = logging.getLogger(__name__)
+
+# ======================================================
+# 🔹 RAG + Agentic System (API Key + AAD separation)
+# ======================================================
 class FinancialRAGMAgenticSystem:
     def __init__(
         self,
@@ -194,7 +199,8 @@ class FinancialRAGMAgenticSystem:
         embedding_deployment: str,
         openai_deployment: str,
         api_version: str = "2024-02-01",
-    ) -> None:
+    ):
+        # ✅ API-key based auth for RAG models (same as code 2)
         self.embed_model = AzureOpenAIEmbedding(
             model=embedding_deployment,
             deployment_name=embedding_deployment,
@@ -211,16 +217,23 @@ class FinancialRAGMAgenticSystem:
             temperature=0.1,
             max_tokens=4000,
         )
+
+        # Register globally in LlamaIndex
         Settings.embed_model = self.embed_model
         Settings.llm = self.llm
+
+        # Thread executor + placeholders
         self.vector_index = None
         self.source_text = ""
         self.executor = ThreadPoolExecutor(max_workers=10)
 
+    # ======================================================
+    # 🔸 RAG setup and retrieval
+    # ======================================================
     async def _fetch_and_parse_10q(self, url: str) -> str:
         def blocking_fetch() -> str:
             headers = {
-                "User-Agent": os.getenv("SEC_USER_AGENT", "creditai@example.com"),
+                "User-Agent": "Sachin Bhusnurmath (sachin@example.com)",
                 "Accept-Encoding": "gzip, deflate",
                 "Accept-Language": "en-US,en;q=0.9",
             }
@@ -229,8 +242,7 @@ class FinancialRAGMAgenticSystem:
             soup = BeautifulSoup(resp.text, "html.parser")
             return soup.get_text(separator="\n", strip=True)
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, blocking_fetch)
+        return await asyncio.get_event_loop().run_in_executor(self.executor, blocking_fetch)
 
     async def _build_vector_index(self, text: str):
         def blocking_build():
@@ -239,8 +251,7 @@ class FinancialRAGMAgenticSystem:
             nodes = node_parser.get_nodes_from_documents([doc])
             return VectorStoreIndex(nodes, embed_model=self.embed_model, show_progress=False)
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, blocking_build)
+        return await asyncio.get_event_loop().run_in_executor(self.executor, blocking_build)
 
     async def query_vector_index(self, query: str, top_k: int = 3) -> str:
         def blocking_query():
@@ -249,72 +260,71 @@ class FinancialRAGMAgenticSystem:
             )
             return str(query_engine.query(query))
 
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(self.executor, blocking_query)
+        return await asyncio.get_event_loop().run_in_executor(self.executor, blocking_query)
 
     async def setup_vector_index_from_url(self, url: str) -> None:
-        logger.info("Fetching and indexing filing from URL…")
+        print("🌐 Fetching and indexing filing...")
         self.source_text = await self._fetch_and_parse_10q(url)
         self.vector_index = await self._build_vector_index(self.source_text)
-        logger.info("Vector index ready from URL.")
+        print("✅ Vector index ready.\n")
 
     async def setup_vector_index_from_text(self, text: str) -> None:
-        logger.info("Indexing uploaded document text…")
+        print("🧾 Indexing uploaded text...")
         self.source_text = text
         self.vector_index = await self._build_vector_index(self.source_text)
-        logger.info("Vector index ready from uploaded text.")
+        print("✅ Vector index ready from text.\n")
 
-    async def run_single_agent(self, cfg: Dict[str, Any], reflection_agent: ChatAgent, credential, project_endpoint: str):
+    # ======================================================
+    # 🔸 Agentic pipeline (AAD token–based)
+    # ======================================================
+    async def run_single_agent(self, cfg: Dict[str, Any], reflection_agent, credential, project_endpoint: str):
         try:
             client = await create_client(credential, project_endpoint, cfg["id"])
-            try:
-                agent = ChatAgent(chat_client=client, instructions=cfg["base_prompt"])
+            agent = ChatAgent(chat_client=client, instructions=cfg["base_prompt"])
 
-                rag_context = await self.query_vector_index(cfg["rag_prompt"], top_k=5)
-                prompt_input = cfg["base_prompt"].format(rag_context=rag_context)
+            rag_context = await self.query_vector_index(cfg["rag_prompt"], top_k=5)
+            prompt_input = cfg["base_prompt"].format(rag_context=rag_context)
 
-                _, _, final_output = await run_generator_with_reflection(
-                    agent, reflection_agent, prompt_input, cfg["revise_prompt"]
-                )
-                logger.info("Finished %s", cfg["name"])
-                return cfg["name"], final_output.strip()
-            finally:
-                # Ensure underlying aiohttp sessions are closed
-                if hasattr(client, "aclose"):
-                    await client.aclose()
-                elif hasattr(client, "close") and asyncio.iscoroutinefunction(client.close):
-                    await client.close()
+            _, _, final_output = await run_generator_with_reflection(
+                agent, reflection_agent, prompt_input, cfg["revise_prompt"]
+            )
+            print(f"✅ Finished {cfg['name']}")
+            return cfg["name"], final_output.strip()
         except Exception as e:
-            logger.exception("%s failed", cfg["name"])
+            print(f"❌ {cfg['name']} failed: {e}")
             return cfg["name"], f"Error: {e}"
 
-    async def run_agent_pipeline(self) -> Dict[str, Any]:
+    async def run_agent_pipeline(self, company_url: Optional[str] = None):
+        if company_url:
+            await self.setup_vector_index_from_url(company_url)
+
+        # ✅ EXACT same AAD initialization as code 2
         async with AzureCliCredential() as credential:
-            project_endpoint = os.getenv(
-                "AZURE_AI_PROJECT_ENDPOINT",
-                "https://aif-creditai-qa-001.services.ai.azure.com/api/projects/aif-proj-creditai-qa-001",
+            project_endpoint = (
+                "https://aif-creditai-qa-001.services.ai.azure.com/api/projects/aif-proj-creditai-qa-001"
             )
+
             reflection_client = await create_client(
                 credential, project_endpoint, "asst_c2s7pi3lsz5ZtbOfukp74bId"
             )
-            try:
-                reflection_agent = ChatAgent(chat_client=reflection_client, instructions=REFLECTION_PROMPT)
+            reflection_agent = ChatAgent(chat_client=reflection_client, instructions=REFLECTION_PROMPT)
 
-                tasks = [
-                    self.run_single_agent(cfg, reflection_agent, credential, project_endpoint)
-                    for cfg in GENERATOR_CONFIGS
-                ]
-                results_list = await asyncio.gather(*tasks)
-                results = {k: v for k, v in results_list}
-                return results
-            finally:
-                # Close reflection client to avoid unclosed session warnings
-                if hasattr(reflection_client, "aclose"):
-                    await reflection_client.aclose()
-                elif hasattr(reflection_client, "close") and asyncio.iscoroutinefunction(reflection_client.close):
-                    await reflection_client.close()
+            tasks = [
+                self.run_single_agent(cfg, reflection_agent, credential, project_endpoint)
+                for cfg in GENERATOR_CONFIGS
+            ]
 
-    # Helper functions (reorganized only)
+            results_list = await asyncio.gather(*tasks)
+            results = {k: v for k, v in results_list}
+
+            print("\n✅ FINAL RESULTS:\n")
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+            return results
+
+
+# ======================================================
+# 🔹 Helper functions
+# ======================================================
 async def create_client(credential, project_endpoint: str, agent_id: str):
     return AzureAIAgentClient(
         async_credential=credential,
@@ -322,36 +332,45 @@ async def create_client(credential, project_endpoint: str, agent_id: str):
         agent_id=agent_id,
     )
 
+
 async def run_generator_with_reflection(
-    generator_agent: ChatAgent,
-    reflection_agent: ChatAgent,
+    generator_agent,
+    reflection_agent,
     input_text: str,
     revision_prompt: str,
 ):
     thread = generator_agent.get_new_thread()
-
-    # Step 1: Generate initial output
     gen_response = await generator_agent.run(input_text, thread=thread)
-
-    # Step 2: Reflect on the generated output
-    reflect_input = (
-        f"{REFLECTION_PROMPT}\n\n"
-        f"Generator Output:\n{getattr(gen_response, 'text', '')}"
-    )
+    reflect_input = f"{REFLECTION_PROMPT}\n\nGenerator Output:\n{gen_response.text}"
     reflect_response = await reflection_agent.run(reflect_input, thread=thread)
-
-    # Step 3: Revise based on reflection
-    revise_input = (
-        f"{revision_prompt}\n"
-        f"Reflection feedback:\n{getattr(reflect_response, 'text', '')}"
-    )
+    revise_input = f"{revision_prompt}\nReflection feedback:\n{reflect_response.text}"
     revised_response = await generator_agent.run(revise_input, thread=thread)
+    return gen_response.text, reflect_response.text, revised_response.text
 
-    return (
-        getattr(gen_response, "text", "").strip(),
-        getattr(reflect_response, "text", "").strip(),
-        getattr(revised_response, "text", "").strip(),
+
+# ======================================================
+# 🔹 Entry points
+# ======================================================
+async def run_full_pipeline_from_url(url: str, similarity_top_k: int = 5) -> Dict[str, Any]:
+    pipeline = FinancialRAGMAgenticSystem(
+        azure_endpoint="https://ea-oai-sandbox.openai.azure.com",
+        api_key="2f6e41aa534f49908feb01c6de771d6b",
+        embedding_deployment="text-embedding-ada-002",
+        openai_deployment="gpt-4o",
     )
+    await pipeline.setup_vector_index_from_url(url)
+    return await pipeline.run_agent_pipeline(company_url=None)
+
+
+async def run_full_pipeline_from_text(text: str, similarity_top_k: int = 5) -> Dict[str, Any]:
+    pipeline = FinancialRAGMAgenticSystem(
+        azure_endpoint="https://ea-oai-sandbox.openai.azure.com",
+        api_key="2f6e41aa534f49908feb01c6de771d6b",
+        embedding_deployment="text-embedding-ada-002",
+        openai_deployment="gpt-4o",
+    )
+    await pipeline.setup_vector_index_from_text(text)
+    return await pipeline.run_agent_pipeline(company_url=None)
 
 # File parsing (reorganized from risk-11)
 def extract_text_from_file(file_obj, filename: Optional[str] = None, file_type: Optional[str] = None) -> str:
@@ -435,25 +454,3 @@ def build_latest_10q_url_from_mapping(ticker: str, mapping_json_path: str) -> Op
         logger.exception("Failed building 10-Q URL from mapping")
         return None
 
-async def run_full_pipeline_from_url(url: str, similarity_top_k: int = 5) -> Dict[str, Any]:
-    pipeline = FinancialRAGMAgenticSystem(
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "https://ea-oai-sandbox.openai.azure.com"),
-        api_key=os.getenv("AZURE_OPENAI_KEY", ""),
-        embedding_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002"),
-        openai_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4o"),
-    )
-    await pipeline.setup_vector_index_from_url(url)
-    # similarity_top_k is used inside query_vector_index; kept consistent via call sites
-    results = await pipeline.run_agent_pipeline()
-    return results
-
-async def run_full_pipeline_from_text(text: str, similarity_top_k: int = 5) -> Dict[str, Any]:
-    pipeline = FinancialRAGMAgenticSystem(
-        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT", "https://ea-oai-sandbox.openai.azure.com"),
-        api_key=os.getenv("AZURE_OPENAI_KEY", ""),
-        embedding_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-ada-002"),
-        openai_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT", "gpt-4o"),
-    )
-    await pipeline.setup_vector_index_from_text(text)
-    results = await pipeline.run_agent_pipeline()
-    return results

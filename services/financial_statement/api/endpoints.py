@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 # ✅ CHANGE: use local core import to match required structure
-from core.financial_api import FinancialDataFetcher
+from services.financial_statement.core.financial_api import FinancialDataFetcher
 
 # ---------- Local request/response models & helpers ----------
 # ✅ CHANGE: Provide local pydantic models and enums so the service
