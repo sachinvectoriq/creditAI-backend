@@ -65,3 +65,6 @@ mypy
 
 #Agentic development
 agent_framework
+
+# SAML authentication
+saml
