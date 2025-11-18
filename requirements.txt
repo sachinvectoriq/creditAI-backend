@@ -68,3 +68,5 @@ agent_framework
 
 # SAML authentication
 saml
+quart
+python3-saml
