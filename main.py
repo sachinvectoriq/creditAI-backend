@@ -11,6 +11,7 @@ main = FastAPI(
     version="1.0.0",
 )
 
+main.config = {}
 main.config["SAML_PATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saml")
 main.config["SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')  # Replac
 
