@@ -13,21 +13,22 @@ main = FastAPI(
 
 main.config = {}
 main.config["SAML_PATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saml")
-main.config["SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')  # Replac
-
-
+main.config["SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')
 # ---- SAML routes ----
-@main.route('/saml/login')
-async def login(): # Changed to async def
-    return await saml_login(main.config["SAML_PATH"]) # Added await
- 
-@main.route('/saml/callback', methods=['POST'])
-async def login_callback(): # Changed to async def
-    return await saml_callback(main.config["SAML_PATH"]) # Added await
- 
-@main.route('/saml/token/extract', methods=['POST'])
-async def func_get_data_from_token(): # Changed to async def
-    return await extract_token() # Added await
+@main.get("/saml/login")
+async def login(request: Request):
+    return await saml_login(main.config["SAML_PATH"])
+
+
+@main.post("/saml/callback")
+async def login_callback(request: Request):
+    return await saml_callback(main.config["SAML_PATH"])
+
+
+@main.post("/saml/token/extract")
+async def func_get_data_from_token(request: Request):
+    return await extract_token()
+
 
 @main.get("/health", tags=["Health"])
 async def health_check():
