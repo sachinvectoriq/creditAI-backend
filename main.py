@@ -18,8 +18,8 @@ main.config["SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')  # Replac
 
 # ---- SAML routes ----
 @main.route('/saml/login')
-async def login(): # Changed to async def
-    return await saml_login(main.config["SAML_PATH"]) # Added await
+async def login(request): 
+    return await saml_login(main.config["SAML_PATH"])
  
 @main.route('/saml/callback', methods=['POST'])
 async def login_callback(): # Changed to async def
