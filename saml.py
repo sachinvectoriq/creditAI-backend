@@ -3,7 +3,8 @@ import json
 import datetime
 import jwt  # PyJWT
 import asyncio
-from quart import redirect, request, jsonify
+from fastapi import Request
+from fastapi.responses import RedirectResponse, JSONResponse
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
 
@@ -12,24 +13,44 @@ admin_group_id = os.getenv('ADMIN_GROUP_ID')
 redirect_url = os.getenv('REDIRECT_URL')
 JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY')
 
-# Initialize SAML Auth
+
+# -------------------------
+#   INIT SAML AUTH
+# -------------------------
 def init_saml_auth(req, saml_path):
     print('In init auth')
     return OneLogin_Saml2_Auth(req, custom_base_path=saml_path)
 
-# Prepare request for OneLogin SAML
-async def prepare_quart_request(request):
-    print('In Prepare Quart Request')
+
+# -------------------------
+#   PREPARE FASTAPI REQUEST
+# -------------------------
+async def prepare_fastapi_request(request: Request):
+    print('In Prepare FastAPI Request')
+
+    # POST data
+    try:
+        form = await request.form()
+        post_data = dict(form)
+    except Exception:
+        post_data = {}
+
+    # GET data
+    get_data = dict(request.query_params)
+
     return {
         'https': 'on',
-        'http_host': request.host,
-        'script_name': request.path,
-        'server_port': request.host.split(':')[1] if ':' in request.host else '443',
-        'get_data': request.args.copy(),                    # sync
-        'post_data': (await request.form).copy()            # async
+        'http_host': request.client.host,
+        'script_name': request.url.path,
+        'server_port': str(request.url.port or 443),
+        'get_data': get_data,
+        'post_data': post_data
     }
 
-# JWT creation
+
+# -------------------------
+#   JWT CREATION
+# -------------------------
 def create_jwt_token(user_data):
     expiration = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
     payload = {
@@ -39,7 +60,10 @@ def create_jwt_token(user_data):
     token = jwt.encode(payload, JWT_SECRET_KEY, algorithm='HS256')
     return token
 
-# JWT decoding
+
+# -------------------------
+#   JWT DECODING
+# -------------------------
 def get_data_from_token(token):
     try:
         decoded_data = jwt.decode(token, JWT_SECRET_KEY, algorithms=['HS256'])
@@ -49,25 +73,31 @@ def get_data_from_token(token):
     except InvalidTokenError:
         return 'Error: Invalid token'
 
-# SAML login route
-async def saml_login(saml_path):
+
+# -------------------------
+#   SAML LOGIN
+# -------------------------
+async def saml_login(request: Request, saml_path):
     try:
         print('In SAML Login')
-        req = await prepare_quart_request(request)
+        req = await prepare_fastapi_request(request)
         print(f'Request Prepared: {req}')
         auth = init_saml_auth(req, saml_path)
         print('SAML Auth Initialized')
         login_url = auth.login()
         print(f'Redirecting to: {login_url}')
-        return redirect(login_url)
+        return RedirectResponse(login_url)
     except Exception as e:
         print(f'Error during SAML login: {str(e)}')
-        return f'Internal Server Error: {str(e)}', 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-# SAML callback route with email included
-async def saml_callback(saml_path):
+
+# -------------------------
+#   SAML CALLBACK
+# -------------------------
+async def saml_callback(request: Request, saml_path):
     print('In SAML Callback')
-    req = await prepare_quart_request(request)
+    req = await prepare_fastapi_request(request)
     auth = init_saml_auth(req, saml_path)
 
     await asyncio.to_thread(auth.process_response)
@@ -78,11 +108,9 @@ async def saml_callback(saml_path):
         user_data_from_saml = auth.get_attributes()
         name_id_from_saml = auth.get_nameid()
 
-        from quart import session
-        session['samlUserdata'] = user_data_from_saml
-        session['samlNameId'] = name_id_from_saml
+        # FastAPI has no session. Just store local variables.
+        json_data = user_data_from_saml
 
-        json_data = session.get('samlUserdata', {})
         groups = json_data.get("http://schemas.microsoft.com/ws/2008/06/identity/claims/groups", [])
 
         if admin_group_id and admin_group_id in groups:
@@ -92,27 +120,37 @@ async def saml_callback(saml_path):
             'name': json_data.get('http://schemas.microsoft.com/identity/claims/displayname'),
             'group': group_name,
             'job_title': json_data.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/jobtitle'),
-            'email': json_data.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress')  # Added here
+            'email': json_data.get('http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress')
         }
 
-        await asyncio.to_thread(
-            lambda: (lambda f: f.write(json.dumps(json_data, indent=4)))(open("session_data_from_backend.txt", "w"))
-        )
+        # Save as before
+        def write_session_file():
+            with open("session_data_from_backend.txt", "w") as f:
+                f.write(json.dumps(json_data, indent=4))
+
+        await asyncio.to_thread(write_session_file)
 
         token = create_jwt_token(user_data)
-        return redirect(f'{redirect_url}?token={token}')
-    else:
-        return f"Error in SAML Authentication: {errors}-{req}", 500
+        return RedirectResponse(f"{redirect_url}?token={token}")
 
-# Token extractor
-async def extract_token():
-    token = request.args.get('token')
+    else:
+        return JSONResponse(
+            {"error": f"SAML Authentication failed: {errors}", "request": req},
+            status_code=500
+        )
+
+
+# -------------------------
+#   TOKEN EXTRACTOR
+# -------------------------
+async def extract_token(request: Request):
+    token = request.query_params.get('token')
     if not token:
-        return jsonify({"error": "Token is missing"}), 400
+        return JSONResponse({"error": "Token is missing"}, status_code=400)
 
     user_data = get_data_from_token(token)
 
     if isinstance(user_data, str) and user_data.startswith("Error"):
-        return jsonify({"error": user_data}), 400
+        return JSONResponse({"error": user_data}, status_code=400)
 
-    return jsonify({"user_data": user_data}), 200
+    return JSONResponse({"user_data": user_data}, status_code=200)
