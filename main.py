@@ -4,7 +4,7 @@ from services.financial_statement.main import financial_app as financial_stateme
 from fastapi import FastAPI
 import os
 from saml import saml_login, saml_callback, extract_token
-
+from fastapi import FastAPI, Request
 main = FastAPI(
     title="Credit AI Gateway",
     description="Gateway that forwards requests to the underlying microservices.",
