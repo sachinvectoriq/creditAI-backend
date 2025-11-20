@@ -70,3 +70,6 @@ agent_framework
 saml
 quart
 python3-saml
+
+#telemetry
+applicationinsights
