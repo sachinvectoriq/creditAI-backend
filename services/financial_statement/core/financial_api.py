@@ -178,13 +178,19 @@ class FinancialDataFetcher:
         Process financial statement data into a DataFrame matching the output of _process_statement_data,
         without assuming a 'data' key in the payload.
 
-        Output columns:
+        Output columns (per row dict; insertion order is preserved by pandas):
         - Metric
         - Type: 'Quarterly' or 'Annual'
-        - Q1..Q5 (as available from value2..value6) for quarterly rows
-        - Y1..Y5 (as available from value2..value6) for annual rows
+        - For Quarterly:
+            Q1, Q%_1, Q2, Q%_2, Q3, ... (up to Q5 if available)
+        where Q%_i = % change from Q(i) -> Q(i+1)
+        - For Annual:
+            Y1, Y%_1, Y2, Y%_2, Y3, ... (up to Y5 if available)
+        where Y%_i = % change from Y(i) -> Y(i+1)
         - Statement
         """
+
+        # Decide which nested key we prefer based on statement_name
         preferred_key = None
         name_lower = (statement_name or "").lower()
         if "balance" in name_lower:
@@ -251,37 +257,86 @@ class FinancialDataFetcher:
         q_rows = _find_rows(quarterly_data)
         a_rows = _find_rows(annual_data)
 
-        # Quarterly -> Q1..Q5 mapped from value2..value6
+        # -----------------------------
+        # Quarterly -> Q1..Q5 + Q%_i
+        # -----------------------------
         if q_rows:
             for row in q_rows:
                 metric = (row.get("value1") or "").strip()
-                if metric in metrics_list:
-                    row_data: Dict[str, Any] = {"Metric": metric, "Type": "Quarterly"}
-                    # Align with the original method: value2..value6 -> Q1..Q5
-                    for i in range(2, 7):  # 2..6
-                        v = row.get(f"value{i}")
-                        if v is not None:
-                            row_data[f"Q{i-1}"] = self._clean_numeric_value(v)
-                    all_data.append(row_data)
+                if metric not in metrics_list:
+                    continue
 
-        # Annual -> Y1..Y5 mapped from value2..value6
+                # Extract numeric values from value2..value6
+                numeric_values: List[float] = []
+                for i in range(2, 7):  # value2..value6
+                    v = row.get(f"value{i}")
+                    if v is not None:
+                        numeric_values.append(self._clean_numeric_value(v))
+
+                if not numeric_values:
+                    continue
+
+                # Build interleaved structure: Q1, Q%_1, Q2, Q%_2, ...
+                row_data: Dict[str, Any] = {"Metric": metric, "Type": "Quarterly"}
+                num_periods = len(numeric_values)
+
+                for idx, val in enumerate(numeric_values):
+                    # Period label
+                    q_label = f"Q{idx + 1}"
+                    row_data[q_label] = val
+
+                    # Percentage-change label (between current and next), if next exists
+                    if idx < num_periods - 1:
+                        next_val = numeric_values[idx + 1]
+                        pct_change = self._calculate_percentage_change(next_val, val)
+                        # Use distinct column names for each step to avoid duplicate keys
+                        pct_label = f"Q%_{idx + 1}"
+                        row_data[pct_label] = pct_change
+
+                all_data.append(row_data)
+
+        # -----------------------------
+        # Annual -> Y1..Y5 + Y%_i
+        # -----------------------------
         if a_rows:
             for row in a_rows:
                 metric = (row.get("value1") or "").strip()
-                if metric in metrics_list:
-                    row_data = {"Metric": metric, "Type": "Annual"}
-                    for i in range(2, 7):  # 2..6
-                        v = row.get(f"value{i}")
-                        if v is not None:
-                            row_data[f"Y{i-1}"] = self._clean_numeric_value(v)
-                    all_data.append(row_data)
+                if metric not in metrics_list:
+                    continue
+
+                # Extract numeric values from value2..value6
+                numeric_values: List[float] = []
+                for i in range(2, 7):  # value2..value6
+                    v = row.get(f"value{i}")
+                    if v is not None:
+                        numeric_values.append(self._clean_numeric_value(v))
+
+                if not numeric_values:
+                    continue
+
+                # Build interleaved structure: Y1, Y%_1, Y2, Y%_2, ...
+                row_data: Dict[str, Any] = {"Metric": metric, "Type": "Annual"}
+                num_periods = len(numeric_values)
+
+                for idx, val in enumerate(numeric_values):
+                    # Period label
+                    y_label = f"Y{idx + 1}"
+                    row_data[y_label] = val
+
+                    # Percentage-change label (between current and next), if next exists
+                    if idx < num_periods - 1:
+                        next_val = numeric_values[idx + 1]
+                        pct_change = self._calculate_percentage_change(next_val, val)
+                        # Use distinct column names for each step
+                        pct_label = f"Y%_{idx + 1}"
+                        row_data[pct_label] = pct_change
+
+                all_data.append(row_data)
 
         if not all_data:
             return pd.DataFrame()
 
         df = pd.DataFrame(all_data)
-        # df = df[df["Metric"].isin(metrics_list)]
-        # df.set_index("Metric", inplace=True)
         df["Statement"] = statement_name
         return df
 
@@ -313,21 +368,6 @@ class FinancialDataFetcher:
             'Net Income'
         ]
 
-        # Process for both quarterly and annual if available
-        # quarterly = await self.fetch_financial_data(2) if frequency == 1 else data
-        # annual = await self.fetch_financial_data(1) if frequency == 2 else data
-        # quarterly_data = self.fetch_financial_data(frequency=2)  # Quarterly
-        # annual_data = self.fetch_financial_data(frequency=1)     # Annual
-        
-        # # Extract income statement tables
-        # quarterly_income = None
-        # annual_income = None
-        
-        # if quarterly_data and 'data' in quarterly_data:
-        #     quarterly_income = quarterly_data['data'].get('incomeStatementTable')
-        
-        # if annual_data and 'data' in annual_data:
-        #     annual_income = annual_data['data'].get('incomeStatementTable')
         q_task = self.fetch_financial_data(frequency=2)
         a_task = self.fetch_financial_data(frequency=1)
         quarterly_data, annual_data = await asyncio.gather(q_task, a_task, return_exceptions=False)
@@ -371,97 +411,113 @@ class FinancialDataFetcher:
             metrics_list=balance_metrics,
             statement_name="Balance Sheet",
         )
-        # # Calculate Working Capital and Shares Outstanding
-        # if not df.empty:
-        #     # Calculate Working Capital = Total Current Assets - Total Current Liabilities
-        #     if 'Working Capital' in df.index:
-        #         for col in df.columns:
-        #             if 'Δ%' not in col:  # Only for value columns
-        #                 try:
-        #                     # Get Total Current Assets value
-        #                     current_assets_val = df.loc['Total Current Assets', col]
-        #                     # Get Total Current Liabilities value
-        #                     current_liabilities_val = df.loc['Total Current Liabilities', col]
-                            
-        #                     # Clean values to numeric for calculation
-        #                     ca_numeric = self._clean_numeric_value(current_assets_val)
-        #                     cl_numeric = self._clean_numeric_value(current_liabilities_val)
-                            
-        #                     if pd.notna(ca_numeric) and pd.notna(cl_numeric):
-        #                         working_capital = ca_numeric - cl_numeric
-        #                         df.loc['Working Capital', col] = self._format_currency(working_capital)
-        #                 except:
-        #                     pass
+        if df is None or df.empty:
+            return None
+
+        # --- Compute derived ratios: Current Ratio, Quick Ratio, Debt/Equity ---
+
+        # Drop any existing ratio rows (in case API already returns them)
+        ratio_metrics = {"Working Capital", "Net Worth(OE)", "Current Ratio", "Quick Ratio", "Debt/Equity"}
+        df = df[~df["Metric"].isin(ratio_metrics)]
+
+        # Helper: build rows for a given type (Quarterly / Annual)
+        def _compute_ratio_rows(
+            df_block: pd.DataFrame,
+            type_label: str,
+            col_prefix: str,
+            statement_name: str = "Balance Sheet",
+        ) -> List[Dict[str, Any]]:
+            """
+            df_block: df filtered to Type == type_label, still with columns like Q1..Q5 or Y1..Y5
+            col_prefix: 'Q' for quarterly, 'Y' for annual
+            """
+            if df_block.empty:
+                return []
+
+            # Work with metric as index
+            block = df_block.set_index("Metric")
+            cols = [c for c in block.columns if c.startswith(col_prefix)]
+            rows: List[Dict[str, Any]] = []
+
+            # Safely check required metrics
+            idx = block.index
+
+            def _row_data(metric_name: str, values: pd.Series) -> Dict[str, Any]:
+                out: Dict[str, Any] = {
+                    "Metric": metric_name,
+                    "Type": type_label,
+                    "Statement": statement_name,
+                }
+                for c in cols:
+                    out[c] = values.get(c, np.nan)
+                return out
             
-        #     # Calculate Shares Outstanding = Total Assets - Total Liabilities
-        #     if 'Net Worth(OE)' in df.index:
-        #         for col in df.columns:
-        #             if 'Δ%' not in col:  # Only for value columns
-        #                 try:
-        #                     # Get Total Assets value
-        #                     total_assets_val = df.loc['Total Assets', col]
-        #                     # Get Total Liabilities value
-        #                     total_liabilities_val = df.loc['Total Liabilities', col]
-                            
-        #                     # Clean values to numeric for calculation
-        #                     ta_numeric = self._clean_numeric_value(total_assets_val)
-        #                     tl_numeric = self._clean_numeric_value(total_liabilities_val)
-                            
-        #                     if pd.notna(ta_numeric) and pd.notna(tl_numeric):
-        #                         shares_outstanding = ta_numeric - tl_numeric
-        #                         df.loc['Net Worth(OE)', col] = self._format_currency(shares_outstanding)
-        #                 except:
-        #                     pass
-            
-        #     if 'Current Ratio' in df.index:
-        #         for col in df.columns:
-        #             if 'Δ%' not in col:
-        #                 try:
-        #                     current_assets_val = df.loc['Total Current Assets', col]
-        #                     current_liabilities_val = df.loc['Total Current Liabilities', col]
-                            
-        #                     ca_numeric = self._clean_numeric_value(current_assets_val)
-        #                     cl_numeric = self._clean_numeric_value(current_liabilities_val)
-                            
-        #                     if pd.notna(ca_numeric) and pd.notna(cl_numeric) and cl_numeric != 0:
-        #                         current_ratio = round(ca_numeric / cl_numeric, 2)
-        #                         df.loc['Current Ratio', col] = current_ratio
-        #                 except:
-        #                     pass
-        #     if 'Quick Ratio' in df.index:
-        #         for col in df.columns:
-        #             if 'Δ%' not in col:
-        #                 try:
-        #                     current_assets_val = df.loc['Total Current Assets', col]
-        #                     inventory_val = df.loc['Inventory', col]
-        #                     current_liabilities_val = df.loc['Total Current Liabilities', col]
-                            
-        #                     ca_numeric = self._clean_numeric_value(current_assets_val)
-        #                     inv_numeric = self._clean_numeric_value(inventory_val)
-        #                     cl_numeric = self._clean_numeric_value(current_liabilities_val)
-                            
-        #                     if pd.notna(ca_numeric) and pd.notna(inv_numeric) and pd.notna(cl_numeric) and cl_numeric != 0:
-        #                         quick_ratio = round((ca_numeric - inv_numeric) / cl_numeric, 2)
-        #                         df.loc['Quick Ratio', col] = quick_ratio
-        #                 except:
-        #                     pass
-        #         if 'Debt/Equity' in df.index:
-        #             for col in df.columns:
-        #                 if 'Δ%' not in col:
-        #                     try:
-        #                         long_term_debt_val = df.loc['Total Liabilities', col]
-        #                         net_worth_val = df.loc['Net Worth(OE)', col]
-                                
-        #                         ltd_numeric = self._clean_numeric_value(long_term_debt_val)
-        #                         nw_numeric = self._clean_numeric_value(net_worth_val)
-                                
-        #                         if pd.notna(ltd_numeric) and pd.notna(nw_numeric) and nw_numeric != 0:
-        #                             debt_equity = round(ltd_numeric / nw_numeric, 2)
-        #                             df.loc['Debt/Equity', col] = debt_equity
-        #                     except:
-        #                         pass
-        # If the provider had a hiccup, df can be empty; treat empty as None to trigger 404 upstream
-        return None if df is None or df.empty else df
+            #Working Capital = Current Assets - Current Liabilities
+            if {"Total Current Assets", "Total Current Liabilities"}.issubset(idx):
+                ca = block.loc["Total Current Assets", cols]
+                cl = block.loc["Total Current Liabilities", cols]
+                working_capital = ca - cl
+                rows.append(_row_data("Working Capital", working_capital))
+
+            # Net Worth(OE) = Total Assets - Total Liabilities
+            if {"Total Assets", "Total Liabilities"}.issubset(idx):
+                ta = block.loc["Total Assets", cols]
+                tl = block.loc["Total Liabilities", cols]
+                net_worth = ta - tl
+                rows.append(_row_data("Net Worth(OE)", net_worth))
+
+            # Current Ratio = Current Assets / Current Liabilities
+            if {"Total Current Assets", "Total Current Liabilities"}.issubset(idx):
+                ca = block.loc["Total Current Assets", cols]
+                cl = block.loc["Total Current Liabilities", cols]
+                cl = cl.replace(0, np.nan)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    current_ratio = ca / cl
+                rows.append(_row_data("Current Ratio", current_ratio))
+
+            # Quick Ratio = (Current Assets - Inventory) / Current Liabilities
+            if {
+                "Total Current Assets",
+                "Inventory",
+                "Total Current Liabilities",
+            }.issubset(idx):
+                ca = block.loc["Total Current Assets", cols]
+                inv = block.loc["Inventory", cols]
+                cl = block.loc["Total Current Liabilities", cols]
+                cl = cl.replace(0, np.nan)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    quick_ratio = (ca - inv) / cl
+                rows.append(_row_data("Quick Ratio", quick_ratio))
+
+            # Debt/Equity = Total Liabilities / Net Worth (OE)
+            if {"Total Liabilities", "Net Worth(OE)"}.issubset(idx):
+                tl = block.loc["Total Liabilities", cols]
+                nw = block.loc["Net Worth(OE)", cols]
+                nw = nw.replace(0, np.nan)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    debt_equity = tl / nw
+                rows.append(_row_data("Debt/Equity", debt_equity))
+
+            return rows
+
+        # Split quarterly / annual
+        df_quarterly = df[df["Type"] == "Quarterly"]
+        df_annual = df[df["Type"] == "Annual"]
+
+        new_rows: List[Dict[str, Any]] = []
+        new_rows.extend(_compute_ratio_rows(df_quarterly, "Quarterly", "Q"))
+        new_rows.extend(_compute_ratio_rows(df_annual, "Annual", "Y"))
+
+        if new_rows:
+            df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
+        # Optionally re-order metrics to follow balance_metrics order
+        # (keeps your ratios at the end or in the same logical order)
+        metric_order = {m: i for i, m in enumerate(balance_metrics)}
+        df["Metric_order"] = df["Metric"].map(metric_order).fillna(len(balance_metrics))
+        df = df.sort_values(["Type", "Metric_order"]).drop(columns=["Metric_order"])
+
+        return df if not df.empty else None
 
     async def fetch_cash_flow_async(self, frequency: int = 2) -> Optional[pd.DataFrame]:
         """
