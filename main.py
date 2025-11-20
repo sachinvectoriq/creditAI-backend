@@ -4,7 +4,7 @@ from services.financial_statement.main import financial_app as financial_stateme
 from fastapi import FastAPI
 import os
 from saml import saml_login, saml_callback, extract_token
-
+from fastapi import FastAPI, Request
 main = FastAPI(
     title="Credit AI Gateway",
     description="Gateway that forwards requests to the underlying microservices.",
@@ -17,17 +17,17 @@ main.config["SECRET_KEY"] = os.getenv('JWT_SECRET_KEY')
 # ---- SAML routes ----
 @main.get("/saml/login")
 async def login(request: Request):
-    return await saml_login(main.config["SAML_PATH"])
+    return await saml_login(request, main.config["SAML_PATH"])
 
 
 @main.post("/saml/callback")
 async def login_callback(request: Request):
-    return await saml_callback(main.config["SAML_PATH"])
+    return await saml_callback(request, main.config["SAML_PATH"])
 
 
-@main.post("/saml/token/extract")
+@main.get("/saml/token/extract")
 async def func_get_data_from_token(request: Request):
-    return await extract_token()
+    return await extract_token(request)
 
 
 @main.get("/health", tags=["Health"])
